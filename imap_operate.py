@@ -50,6 +50,21 @@ def trash_cleanup(imap: imapclient.imapclient.IMAPClient, args: list, force: boo
         s += IMAP_MAX_DATA
     imap.close_folder()
 
+def imap_copy_delete(imap: imapclient.imapclient.IMAPClient, datas: list) -> bool:
+    '''IMAPのmoveコマンドの代わりにcopy→deleteにする'''
+    imap.copy(datas, TRASH_PATH)
+    imap.delete_messages(datas)
+    return True
+
+def imap_move(imap: imapclient.imapclient.IMAPClient, datas: list) -> bool:
+    '''IMAPのmoveコマンドを試す'''
+    try:
+        imap.move(datas, TRASH_PATH)
+        return True
+    except imapclient.exceptions.CapabilityError:
+        imap_copy_delete(imap, datas)
+        return False
+
 def delete_mail(imap: imapclient.imapclient.IMAPClient, name: str, dt: date, force: bool) -> bool:
     '''nameフォルダのdt以前のメールを削除する'''
     try:
@@ -69,16 +84,14 @@ def delete_mail(imap: imapclient.imapclient.IMAPClient, name: str, dt: date, for
             print(f'delete {num}')
         # 1000個ずつに分ける            
         s = 0
+        move_func = imap_move
         while s < len(data):
             datas = data[s:s + IMAP_MAX_DATA]
             if DEBUG:
                 print(f'start delete: {s}')
-            try:
-                imap.move(datas, TRASH_PATH)
-            except imapclient.exceptions.CapabilityError:
-                '''moveコマンドがサポートされていない'''
-                imap.copy(datas, TRASH_PATH)
-                imap.delete_messages(datas)
+            if move_func(imap, datas) is False:
+                # 本当はimap.capabilitiesの結果で判断するのが正しい
+                move_func = imap_copy_delete
             s += IMAP_MAX_DATA
     except imapclient.exceptions.IMAPClientError as err:
         print(f'{name}: フォルダがありません')
