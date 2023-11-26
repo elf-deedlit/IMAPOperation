@@ -161,4 +161,6 @@ cython_debug/
 
 # Original
 *.txt
+*.sh
+*.log
 config.py
