@@ -24,7 +24,7 @@ $ imap_operate.py [--force] command [args [args ...]]
     メーリングリスト/いろいろ 30  
     上記フォルダのメールを30日分だけ残して消す
 
-* trash 指定日数
+* trash 指定日数  
 ゴミ箱を指定日数分残して消す
 
 ## オプション
