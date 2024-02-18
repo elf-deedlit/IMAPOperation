@@ -4,22 +4,17 @@ import argparse
 # https://imapclient.readthedocs.io/en/3.0.0/api.html
 # pip install imapclient
 import imapclient
+import configparser
+import os
 import sys
 
 from urllib.parse import unquote
 from datetime import date, timedelta
-try:
-    from config import *
-except ImportError:
-    print('default.pyの項目を埋めてconfig.pyにコピーしてください')
-    sys.exit(1)
+from config import *
 
-if (IMAP_USER is None) or (IMAP_PASSWORD is None):
-    print('config.pyのIMAP_USERとIMAP_PASSWORDを設定してください')
-    sys.exit(1)
-
-def trash_cleanup(imap: imapclient.imapclient.IMAPClient, args: list, force: bool) -> None:
+def trash_cleanup(imap: imapclient.imapclient.IMAPClient, cfg: dict, force: bool) -> None:
     '''指定日以前のゴミ箱を消す'''
+    args = cfg['args']
     try:
         days = int(args[0])
     except (IndexError, ValueError) as err:
@@ -28,9 +23,10 @@ def trash_cleanup(imap: imapclient.imapclient.IMAPClient, args: list, force: boo
         print(err)
         return
     dt = date.today() - timedelta(days = days)
+    trash_path = cfg['trash']
     if DEBUG:
-        print(f'{TRASH_PATH}: before {dt.year:04d}/{dt.month:02d}/{dt.day:02d}')
-    imap.select_folder(TRASH_PATH)
+        print(f'{trash_path}: before {dt.year:04d}/{dt.month:02d}/{dt.day:02d}')
+    imap.select_folder(trash_path)
     data = imap.search(['SEEN', 'BEFORE', dt])
     if len(data) < 1:
         if DEBUG:
@@ -50,24 +46,25 @@ def trash_cleanup(imap: imapclient.imapclient.IMAPClient, args: list, force: boo
         s += IMAP_MAX_DATA
     imap.close_folder()
 
-def imap_copy_delete(imap: imapclient.imapclient.IMAPClient, datas: list) -> bool:
+def imap_copy_delete(imap: imapclient.imapclient.IMAPClient, trash_path: str, datas: list) -> bool:
     '''IMAPのmoveコマンドの代わりにcopy→deleteにする'''
-    imap.copy(datas, TRASH_PATH)
+    imap.copy(datas, trash_path)
     imap.delete_messages(datas)
     return True
 
-def imap_move(imap: imapclient.imapclient.IMAPClient, datas: list) -> bool:
+def imap_move(imap: imapclient.imapclient.IMAPClient, trash_path: str, datas: list) -> bool:
     '''IMAPのmoveコマンドを試す'''
     try:
-        imap.move(datas, TRASH_PATH)
+        imap.move(datas, trash_path)
         return True
     except imapclient.exceptions.CapabilityError:
-        imap_copy_delete(imap, datas)
+        imap_copy_delete(imap, trash_path, datas)
         return False
 
-def delete_mail(imap: imapclient.imapclient.IMAPClient, name: str, dt: date, force: bool) -> bool:
+def delete_mail(imap: imapclient.imapclient.IMAPClient, name: str, trash_path: str, dt: date, force: bool) -> bool:
     '''nameフォルダのdt以前のメールを削除する'''
     try:
+        data = None
         imap.select_folder(name)
         if DEBUG:
             print(f'{name}: delete folder before {dt.year:04d}/{dt.month:02d}/{dt.day:02d}')
@@ -89,13 +86,14 @@ def delete_mail(imap: imapclient.imapclient.IMAPClient, name: str, dt: date, for
             datas = data[s:s + IMAP_MAX_DATA]
             if DEBUG:
                 print(f'start delete: {s}')
-            if move_func(imap, datas) is False:
+            if move_func(imap, trash_path, datas) is False:
                 # 本当はimap.capabilitiesの結果で判断するのが正しい
                 move_func = imap_copy_delete
             s += IMAP_MAX_DATA
     except imapclient.exceptions.IMAPClientError as err:
         print(f'{name}: フォルダがありません')
-        print(len(data))
+        if data:
+            print(len(data))
         print(err)
         return False
     imap.close_folder()
@@ -105,19 +103,18 @@ def convert_folder_to_imap(name: str) -> str:
     '''フォルダ名をIMAPのフォルダ名に変更する'''
     name = unquote(name)    # %20を空白に置換させる
     fs = name.split('/')
-    fs = [INBOX_NAME,] + fs
     return '.'.join(fs)
 
-def file_delete(imap: imapclient.imapclient.IMAPClient, args: list, force: bool) -> None:
+def file_delete(imap: imapclient.imapclient.IMAPClient, cfg: dict, force: bool) -> None:
     '''ファイルで指定されたフォルダの指定日以前のファイルを消す
 フォルダ名(/区切り) 何日前以前を消すか
 例)
 メーリングリスト/いろいろ 30
     '''
-    if len(args) < 1:
+    if len(cfg['args']) < 1:
         print('ファイル名を指定してください')
         return
-    file = args[0]
+    file = cfg['args'][0]
     with open(file, 'r') as fp:
         for v in fp:
             v = v.strip()
@@ -134,10 +131,10 @@ def file_delete(imap: imapclient.imapclient.IMAPClient, args: list, force: bool)
                 print(f'{name},{days}: 数値を指定してください')
                 continue
             dt = date.today() - timedelta(days=days)
-            if delete_mail(imap, name, dt, force) is False:
+            if delete_mail(imap, name, cfg['trash'], dt, force) is False:
                 break
 
-def imap_delete(imap: imapclient.imapclient.IMAPClient, args: list, force: bool) -> None:
+def imap_delete(imap: imapclient.imapclient.IMAPClient, cfg: dict, force: bool) -> None:
     '''指定されたフォルダの指定日以前を削除する'''
     def usage():
         print('delete foldername (year month day) or (timedelta)')
@@ -145,14 +142,15 @@ def imap_delete(imap: imapclient.imapclient.IMAPClient, args: list, force: bool)
     name = None
     dt = None
     try:
-        name = args[0]
-        if len(args) == 4:
-            year = int(args[1])
-            month = int(args[2])
-            day = int(args[3])
+        name = cfg['args'][0]
+        ymd = cfg['args'][1:]
+        if len(ymd) == 3:
+            year = int(ymd[0])
+            month = int(ymd[1])
+            day = int(ymd[2])
             dt = date(year, month, day)
-        elif len(args) == 2:
-            day = int(args[1])
+        elif len(ymd) == 1:
+            day = int(ymd[0])
             dt = date.today() - timedelta(days=day)
         else:
             print('deleteコマンドの引数が足りません')
@@ -167,9 +165,9 @@ def imap_delete(imap: imapclient.imapclient.IMAPClient, args: list, force: bool)
         usage()
         return
     name = convert_folder_to_imap(name)
-    delete_mail(imap, name, dt, force)
+    delete_mail(imap, name, cfg['trash'], dt, force)
 
-def imap_list(imap: imapclient.imapclient.IMAPClient, args: list, f: bool) -> None:
+def imap_list(imap: imapclient.imapclient.IMAPClient, _: dict, f: bool) -> None:
     '''フォルダ名一覧を出力する'''
     fs = []
 
@@ -178,16 +176,15 @@ def imap_list(imap: imapclient.imapclient.IMAPClient, args: list, f: bool) -> No
     for _, sep, name in folders:
         sep = sep.decode('utf-8')
         names = name.split(sep)
-        if names[0] == INBOX_NAME:
-            names = names[1:]
         fs.append('/'.join(names))
 
     fs.sort(key=str.lower)
     for v in fs:
         print(v)
 
-def imap_debug(imap: imapclient.imapclient.IMAPClient, args: list, force: bool) -> None:
+def imap_debug(imap: imapclient.imapclient.IMAPClient, cfg: dict, force: bool) -> None:
     '''IMAPコマンドテスト用'''
+    args = cfg['args']
     name = convert_folder_to_imap(args[0])
     day = int(args[1])
     imap.select_folder(name)
@@ -196,9 +193,11 @@ def imap_debug(imap: imapclient.imapclient.IMAPClient, args: list, force: bool) 
         data = imap.search(['SEEN', 'BEFORE', dt])
     else:
         data = imap.search(['UNFLAGGED', 'SEEN', 'BEFORE', dt])
-    data = data[:2]
+    key = b'BODY[HEADER.FIELDS ("DATE" "SUBJECT")]'
     for msgid, fetchdata in imap.fetch(data, ['FLAGS', 'BODY.PEEK[HEADER.FIELDS (Date Subject)]']).items():
-        v = fetchdata[b'BODY[HEADER.FIELDS ("DATE" "SUBJECT")]']
+        if key not in fetchdata:
+            key = b'BODY[HEADER.FIELDS (DATE SUBJECT)]'
+        v = fetchdata[key]
         flag = fetchdata[b'FLAGS']
         print(f'{msgid}[{flag}]: {v}')
 
@@ -210,28 +209,61 @@ cmdlist = {
     'debug': imap_debug,
 }
 
-def parse_option():
+def config_parse(name: str) -> dict:
+    '''設定ファイルを解析する'''
+    default_result = dict(server='', user=None, password=None, ssl=False, trash='INBOX.Trash')
+    cfg = configparser.ConfigParser()
+    if not os.path.exists(INI_FILE):
+        return default_result
+    cfg.read(INI_FILE)
+    if name in cfg:
+        rslt = dict(cfg[name])
+        rslt['ssl'] = cfg[name].getboolean('ssl')
+        return rslt
+    elif 'default' in cfg:
+        rslt = dict('default')
+        rslt['ssl'] = cfg['default'].getboolean('ssl')
+        return rslt
+    else:
+        return default_result
+
+def parse_option() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='imapの操作')
     parser.add_argument('--force', action='store_true', help='フラグがついているものも操作する')
+    parser.add_argument('--server', type=str, default='default', help='IMAPサーバ')
     parser.add_argument('cmd', choices=cmdlist.keys(), help='コマンド')
     parser.add_argument('args', nargs='*', help='コマンド引数')
 
     return parser.parse_args()
 
-def main():
+def main() -> int:
     args = parse_option()
     cmd = args.cmd
     if cmd not in cmdlist.keys():
         print(f'{cmd}はわかりません')
-        return
-    with imapclient.IMAPClient(IMAP_SERVER, ssl=False) as imap:
+        return 1
+
+    cfg = config_parse(args.server)
+    server = cfg['server']
+    user = cfg['user']
+    password = cfg['password']
+    ssl = cfg['ssl']
+    cfg['force'] = args.force
+    cfg['args'] = args.args
+
+    if (user is None) or (password is None):
+        print(f'{server}: config.iniのuserとpasswordを設定してください')
+        return 1
+
+    with imapclient.IMAPClient(server, ssl=ssl) as imap:
         try:
-            imap.login(IMAP_USER, IMAP_PASSWORD)
-            cmdlist[cmd](imap, args.args, args.force)
+            imap.login(user, password)
+            cmdlist[cmd](imap, cfg, args.force)
         except imapclient.exceptions.LoginError as err:
             print('ログイン失敗')
             print(err)
+            return 1
     return 0
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

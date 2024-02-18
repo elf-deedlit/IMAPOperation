@@ -163,4 +163,4 @@ cython_debug/
 *.txt
 *.sh
 *.log
-config.py
+config.ini

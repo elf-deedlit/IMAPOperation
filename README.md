@@ -8,8 +8,18 @@ $ imap_operate.py [--force] command [args [args ...]]
 
 ## 事前準備
 * imapclientのインストール
-* default.pyをconfig.pyにコピーする
-* config.pyのIMAP_USERとIMAP_PASSWORDを書き換える
+* default.iniをconfig.iniにコピーする
+* config.iniにサーバセクションを作り、以下の設定を行う
+    * server  
+    サーバIPもしくはホスト名
+    * user  
+    サーバにアクセスするときのユーザ名
+    * password  
+    サーバにアクセスするときのパスワード
+    * ssl  
+    サーバにアクセスするときSSLを使うかどうか
+    * trash  
+    ゴミ箱のフォルダ名
 
 ## コマンド一覧
 * list  
@@ -30,6 +40,8 @@ $ imap_operate.py [--force] command [args [args ...]]
 ## オプション
 * --force  
 deleteやfile指定時、FLAGを見ないよう[^1]にする
+* --server  
+設定ファイルのセクションを指定する
 
 [^1]: 指定がない場合FLAGがついているメールを削除しない
 
@@ -39,6 +51,9 @@ deleteやfile指定時、FLAGを見ないよう[^1]にする
 * フォルダ名の指定に空白を指定したいときは%20を使う
 
 ## 変更点
+* 1.0.3
+    * 設定ファイルをiniファイルに変更
+    * サーバごとに設定ファイルに記載出来るようにした
 * 1.0.2
     * MOVE処理を少しだけ効率が良いように変更
 * 1.0.1
