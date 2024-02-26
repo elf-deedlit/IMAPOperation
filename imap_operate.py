@@ -213,9 +213,11 @@ def config_parse(name: str) -> dict:
     '''設定ファイルを解析する'''
     default_result = dict(server='', user=None, password=None, ssl=False, trash='INBOX.Trash')
     cfg = configparser.ConfigParser()
-    if not os.path.exists(INI_FILE):
+    basepath = os.path.abspath(os.path.dirname(__file__))
+    fullpath = os.path.join(basepath, INI_FILE)
+    if not os.path.exists(fullpath):
         return default_result
-    cfg.read(INI_FILE)
+    cfg.read(fullpath)
     if name in cfg:
         rslt = dict(cfg[name])
         rslt['ssl'] = cfg[name].getboolean('ssl')
