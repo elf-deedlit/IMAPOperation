@@ -61,17 +61,24 @@ def imap_move(imap: imapclient.imapclient.IMAPClient, trash_path: str, datas: li
         imap_copy_delete(imap, trash_path, datas)
         return False
 
-def delete_mail(imap: imapclient.imapclient.IMAPClient, name: str, trash_path: str, dt: date, force: bool) -> bool:
+def delete_mail(imap: imapclient.imapclient.IMAPClient, name: str, cfg: dict, dt: date, force: bool) -> bool:
     '''nameフォルダのdt以前のメールを削除する'''
     try:
+        trash_path = cfg['trash']
         data = None
         imap.select_folder(name)
         if DEBUG:
             print(f'{name}: delete folder before {dt.year:04d}/{dt.month:02d}/{dt.day:02d}')
         if force:
-            data = imap.search(['SEEN', 'BEFORE', dt])
+            if cfg['unseen']:
+                data = imap.search('BEFORE', dt)
+            else:
+                data = imap.search(['SEEN', 'BEFORE', dt])
         else:
-            data = imap.search(['UNFLAGGED', 'SEEN', 'BEFORE', dt])
+            if cfg['unseen']:
+                data = imap.search(['UNFLAGGED', 'BEFORE', dt])
+            else:
+                data = imap.search(['UNFLAGGED', 'SEEN', 'BEFORE', dt])
         if len(data) < 1:
             if DEBUG:
                 print(f'{dt.year:04d}/{dt.month:02d}/{dt.day:02d}以前のメールはありません')
@@ -131,7 +138,7 @@ def file_delete(imap: imapclient.imapclient.IMAPClient, cfg: dict, force: bool) 
                 print(f'{name},{days}: 数値を指定してください')
                 continue
             dt = date.today() - timedelta(days=days)
-            if delete_mail(imap, name, cfg['trash'], dt, force) is False:
+            if delete_mail(imap, name, cfg, dt, force) is False:
                 break
 
 def imap_delete(imap: imapclient.imapclient.IMAPClient, cfg: dict, force: bool) -> None:
@@ -165,7 +172,7 @@ def imap_delete(imap: imapclient.imapclient.IMAPClient, cfg: dict, force: bool) 
         usage()
         return
     name = convert_folder_to_imap(name)
-    delete_mail(imap, name, cfg['trash'], dt, force)
+    delete_mail(imap, name, cfg, dt, force)
 
 def imap_list(imap: imapclient.imapclient.IMAPClient, _: dict, f: bool) -> None:
     '''フォルダ名一覧を出力する'''
@@ -233,6 +240,7 @@ def parse_option() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='imapの操作')
     parser.add_argument('--force', action='store_true', help='フラグがついているものも操作する')
     parser.add_argument('--server', type=str, default='default', help='IMAPサーバ')
+    parser.add_argument('--unseen', action='store_true', help='未読のメールも対象にする')
     parser.add_argument('cmd', choices=cmdlist.keys(), help='コマンド')
     parser.add_argument('args', nargs='*', help='コマンド引数')
 
@@ -252,6 +260,7 @@ def main() -> int:
     ssl = cfg['ssl']
     cfg['force'] = args.force
     cfg['args'] = args.args
+    cfg['unseen'] = args.unseen
 
     if (user is None) or (password is None):
         print(f'{server}: config.iniのuserとpasswordを設定してください')
